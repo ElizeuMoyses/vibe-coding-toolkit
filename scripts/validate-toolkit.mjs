@@ -34,11 +34,25 @@ const remoteSafetyTargets = [
 
 for (const path of remoteSafetyTargets) {
   const text = await readFile(path, "utf8");
-  const unsafeRawMain = /raw\.githubusercontent\.com\/[^\s`]+\/main\//i.test(text);
+
+  // Mentioning a mutable URL in a warning/example is allowed. What we forbid is
+  // an executable shortcut that tells the consumer/agent to read/fetch/curl it
+  // and then execute/follow those instructions. Keep this check line-oriented
+  // so prose that explains the risk does not become a false positive.
+  const unsafeInstruction = text.split(/\r?\n/).some((line) => {
+    const referencesMutableRawMain =
+      /raw\.githubusercontent\.com\/[^\s`]+\/main\//i.test(line);
+    const fetchesRemote = /\b(read|fetch|curl|wget|open|load)\b/i.test(line);
+    const executesRemote =
+      /\b(execute|run|follow|apply|implement|obey|use)\b/i.test(line);
+
+    return referencesMutableRawMain && fetchesRemote && executesRemote;
+  });
+
   assert.equal(
-    unsafeRawMain,
+    unsafeInstruction,
     false,
-    `${path} must not instruct consumers to execute raw content from a mutable main branch`,
+    `${path} must not contain an executable shortcut that fetches mutable raw-main instructions`,
   );
 }
 
