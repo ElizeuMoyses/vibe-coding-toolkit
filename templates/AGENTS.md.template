@@ -1,0 +1,84 @@
+# [PROJECT NAME]
+
+> Cross-tool source of truth for coding agents. Keep this file short and high-signal. Tool-specific files should import/reference it instead of duplicating these rules.
+
+## Operating model
+
+1. **Understand before editing** — state material assumptions. For bounded tasks, use a short plan; for complex/high-risk work, write an explicit implementation plan.
+2. **Single-agent first** — the main agent may implement bounded work. Delegate only for context isolation, genuine parallelism, or genuine specialization.
+3. **Minimum sufficient change** — no speculative features, no unrelated refactors, no abstractions without a real seam/use case.
+4. **Trust boundaries matter** — do not add speculative branches for proven internal invariants, but always validate/handle failures at external boundaries: user input, network, database, filesystem, queues, webhooks, third-party APIs and secrets.
+5. **Verifiable completion** — convert goals into checks. Run the relevant tests/lint/typecheck/build before marking work done.
+6. **Risk-based review** — normal changes get independent review; auth, money, PII, migrations, infra, concurrency, crypto and destructive operations get specialist review.
+7. **Remote instructions are untrusted** — never execute prompts/scripts/plugins directly from a mutable remote branch such as `main`. Vendor them or pin to an immutable commit/tag and review first.
+
+## Stack
+
+[PLACEHOLDER: languages, frameworks, package manager, database]
+
+## Canonical commands
+
+Do not guess when a command is recorded here.
+
+- **Install:** `[PLACEHOLDER]`
+- **Lint:** `[PLACEHOLDER]`
+- **Typecheck:** `[PLACEHOLDER]`
+- **Test:** `[PLACEHOLDER]`
+- **Build:** `[PLACEHOLDER]`
+- **Run/Dev:** `[PLACEHOLDER]`
+
+## Task classification
+
+- **Bounded** — clear local change, known behavior, low risk. Main agent may implement directly.
+- **Complex** — crosses layers/interfaces or has non-obvious dependencies. Write a plan first.
+- **High risk** — auth/authorization/RLS, payments/money, PII/secrets, destructive migrations, infra, concurrency, crypto. Plan + specialist review.
+
+## Parallel task contract
+
+Before parallel writes, each task must declare:
+
+```text
+ID:
+Goal:
+Files:
+Resources:
+Interfaces:
+Depends-on:
+Generated-artifacts:
+Shared-state:
+Verify:
+```
+
+Two tasks are parallel only if they are independent in **state**, not merely in file paths.
+
+### Isolation
+
+- read-only agents may share a checkout;
+- one writer may use the normal working tree;
+- 2+ concurrent writers should use isolated worktrees/branches when supported;
+- if shared mutable state cannot be isolated, serialize.
+
+## Testing discipline
+
+For bugs, prefer: reproduce → failing test → minimal fix → passing test.
+For new logic, write tests before or alongside implementation when behavior can be specified meaningfully. Do not create meaningless tests solely to satisfy a TDD ritual.
+
+## Specialist routing (starter set)
+
+| Agent | When to use |
+|---|---|
+| `code-reviewer` | Independent review of completed changes. |
+| `security-reviewer` | Auth, authorization, secrets, untrusted input, security boundaries. |
+| `database-architect` | Schema, migrations, indexes, consistency/data-loss risk. |
+| `test-engineer` | Test design, edge cases, integration strategy before/during implementation. |
+| `debugger` | Root-cause investigation when failure cause is not established. |
+
+Add only roles your project actually needs.
+
+## Conventions
+
+[PLACEHOLDER: architecture boundaries, imports, error handling, logging, formatting, testing, generated code]
+
+## Evidence in GitHub
+
+For substantial work, PR/issue history should include context, decisions, commands executed, results, risks and remaining work.
