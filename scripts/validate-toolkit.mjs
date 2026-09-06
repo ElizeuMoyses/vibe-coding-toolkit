@@ -47,7 +47,7 @@ for (const file of textFiles) {
   for (const block of fenced) {
     const mutableRawMain = /raw\.githubusercontent\.com\/[^\s`]+\/main\//i.test(block);
     const fetchVerb = /\b(read|fetch|curl|wget|open|load|leia|ler|busque|carregue)\b/i.test(block);
-    const executeVerb = /\b(execute|run|follow|apply|implement|obey|use|execute|rode|siga|aplique|implemente)\b/i.test(block);
+    const executeVerb = /\b(execute|run|follow|apply|implement|obey|use|rode|siga|aplique|implemente)\b/i.test(block);
     assert.equal(
       mutableRawMain && fetchVerb && executeVerb,
       false,
@@ -102,11 +102,17 @@ assert.equal(settings.env, undefined, "settings example must not imply undocumen
 assert.deepEqual(settings.hooks, {}, "settings example must not reference hook files that are not shipped");
 assert.ok(settings.permissions?.deny?.length > 0, "settings example should demonstrate a deny boundary for secrets");
 
-// Validate relative Markdown links. This catches documentation rewrites that
-// accidentally leave consumers with a dead local path.
+// Validate relative Markdown links in prose. Links shown inside fenced/inline
+// code are examples for a consumer workspace, not paths that must exist in
+// this repository, so strip code before checking local destinations.
 for (const file of textFiles.filter((file) => file.endsWith(".md"))) {
   const text = await readFile(file, "utf8");
-  for (const match of text.matchAll(/\[[^\]]+\]\(([^)]+)\)/g)) {
+  const prose = text
+    .replace(/```[\s\S]*?```/g, "")
+    .replace(/~~~[\s\S]*?~~~/g, "")
+    .replace(/`[^`\n]*`/g, "");
+
+  for (const match of prose.matchAll(/\[[^\]]+\]\(([^)]+)\)/g)) {
     let target = match[1].trim();
     if (!target || target.startsWith("#") || /^[a-z]+:\/\//i.test(target) || target.startsWith("mailto:")) continue;
     target = target.split("#")[0].split("?")[0];
