@@ -33,7 +33,11 @@ export function parseHookEvent(raw) {
 
 // Usage:
 // const event = parseHookEvent(readStdinRaw());
-// if (event === null) process.exit(0);
 //
-// Then validate the fields your hook actually requires, e.g.:
-// const toolName = typeof event.tool_name === "string" ? event.tool_name : "";
+// IMPORTANT: choose the failure policy at the call site.
+// - Optional/enrichment hook: malformed input may fail open (exit 0).
+// - Security/enforcement hook: malformed or incomplete input must fail closed
+//   using the blocking mechanism documented by that harness.
+//
+// After parsing, validate the fields the hook actually requires, e.g.:
+// const toolName = typeof event?.tool_name === "string" ? event.tool_name : null;
