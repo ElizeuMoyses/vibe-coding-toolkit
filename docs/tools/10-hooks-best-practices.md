@@ -1,10 +1,10 @@
 # Hooks — práticas seguras
 
-Hooks executam automaticamente e, por isso, merecem o mesmo rigor de scripts de produção.
+Hooks executam automaticamente e merecem o mesmo rigor de scripts de produção. O parser, o schema do evento, o exit behavior e a política de falha fazem parte do controle de segurança.
 
 ## Contrato de entrada
 
-Não assuma que `JSON.parse` devolve um objeto. JSON válido também pode ser:
+`JSON.parse` pode devolver JSON válido que não é um objeto de evento:
 
 ```json
 null
@@ -14,7 +14,7 @@ true
 []
 ```
 
-O helper deste fork só aceita **objeto não-array** como evento válido:
+O helper deste fork aceita somente **objeto não-array**:
 
 ```js
 export function parseHookEvent(raw) {
@@ -25,11 +25,7 @@ export function parseHookEvent(raw) {
     return null;
   }
 
-  if (
-    parsed === null ||
-    typeof parsed !== "object" ||
-    Array.isArray(parsed)
-  ) {
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
     return null;
   }
 
@@ -37,41 +33,37 @@ export function parseHookEvent(raw) {
 }
 ```
 
-Depois disso, valide os campos que o hook realmente exige. “É objeto” não significa “tem o schema correto”.
+Isso é apenas a primeira camada. Depois valide os campos obrigatórios do evento. “É objeto” não significa “tem o schema correto”.
 
 ## Fail-open vs fail-closed
 
-Use **fail-open** para melhorias opcionais: banners, dicas, compressão de saída, enriquecimento de contexto.
+Use **fail-open** somente quando perder o hook é aceitável: banner, dica, compactação de saída, telemetria opcional ou enriquecimento de contexto.
 
-Use **fail-closed** ou confirmação explícita para controles de segurança onde permitir a ação durante falha seria pior que bloquear: proteção de segredos, comandos destrutivos, políticas de publicação, mutações irreversíveis.
+Use **fail-closed** para controles de segurança quando permitir a operação durante falha seria pior que bloquear: proteção de segredos, comandos destrutivos, publicação, deploy, mutações irreversíveis e políticas de acesso.
 
-A decisão deve ser escrita no próprio hook.
+A política deve ser explícita no próprio hook e testada.
 
-## Princípios
+## Exemplo: Claude Code `PreToolUse` protegendo `.env`
 
-- leia stdin de forma defensiva;
-- trate JSON inválido, `null`, scalar e array;
-- use optional chaining em campos opcionais;
-- limite stdout/stderr ao necessário;
-- nunca exponha secrets no log;
-- mantenha hooks rápidos;
-- evite rede no caminho crítico quando não for indispensável;
-- teste exit codes esperados;
-- faça pin/review de qualquer dependência executada pelo hook.
-
-## Exemplo de proteção de `.env`
+No Claude Code, `PreToolUse` pode bloquear uma chamada de ferramenta. Neste exemplo de **controle de segurança**, payload inválido ou schema incompleto também bloqueiam; não existe bypass por erro de parsing.
 
 ```js
 #!/usr/bin/env node
 import { readStdinRaw, parseHookEvent } from "./hook-io.mjs";
 
 const event = parseHookEvent(readStdinRaw());
-if (event === null) process.exit(0);
+if (event === null) {
+  console.error("Bloqueado: evento do hook inválido.");
+  process.exit(2);
+}
 
 const filePath = event?.tool_input?.file_path;
-if (typeof filePath !== "string") process.exit(0);
+if (typeof filePath !== "string") {
+  console.error("Bloqueado: file_path ausente ou inválido.");
+  process.exit(2);
+}
 
-if (/\.env(\..+)?$/.test(filePath)) {
+if (/(^|\/)\.env(\..+)?$/.test(filePath)) {
   console.error(`Bloqueado: ${filePath} parece conter segredos.`);
   process.exit(2);
 }
@@ -79,11 +71,22 @@ if (/\.env(\..+)?$/.test(filePath)) {
 process.exit(0);
 ```
 
-Confirme na documentação do seu harness o significado dos exit codes. Não copie códigos de bloqueio entre ferramentas assumindo compatibilidade.
+O `exit 2` acima é específico do contrato atual de hooks do Claude Code. Outros harnesses podem usar outro código ou JSON estruturado; confirme a documentação da ferramenta antes de copiar o mecanismo de bloqueio.
 
-## Teste local
+## Princípios
 
-Teste pelo menos:
+- leia stdin de forma defensiva;
+- rejeite JSON inválido, `null`, scalar e array;
+- valide schema/campos antes de decidir;
+- escolha fail-open/fail-closed de acordo com o risco;
+- nunca exponha secrets no log;
+- limite stdout/stderr ao necessário;
+- mantenha hooks rápidos e evite rede no caminho crítico quando possível;
+- teste o caminho permitido **e** o caminho bloqueado;
+- faça pin/review de dependências executadas pelo hook;
+- mantenha código de hook local e versionado.
+
+## Casos mínimos de teste
 
 ```text
 JSON inválido
@@ -92,11 +95,12 @@ null
 []
 {}
 evento normal
+evento sem campo obrigatório
 entrada sensível
 ```
 
-Este repositório automatiza esses casos para `parseHookEvent` em `scripts/validate-toolkit.mjs`.
+Este repositório automatiza os casos básicos do parser em `scripts/validate-toolkit.mjs`.
 
 ## Supply chain
 
-Um hook pode transformar uma dependência comprometida em execução automática. Não execute scripts remotos de branch mutável. Prefira código local versionado e dependências pinadas quando possível.
+Um hook pode transformar uma dependência comprometida em execução automática. Prefira código local revisado e versões resolvidas por digest/commit SHA. Não execute scripts vindos diretamente de branch mutável.

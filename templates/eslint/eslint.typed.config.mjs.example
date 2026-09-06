@@ -1,18 +1,19 @@
-// Type-aware lint tier, deliberately kept OUT of eslint.config.mjs. Turning
-// on projectService means ESLint builds a full TypeScript program, which on
-// a large codebase is slow enough to break a pre-commit hook and heavy
-// enough to exhaust the heap on a small CI runner.
+// Optional type-aware lint tier.
 //
-// Two config files and two npm scripts (`lint` and `lint:types`), rather
-// than one config branching on process.env.CI: branching makes local and CI
-// behavior diverge silently for identical code, and reading process.env
-// inside a flat config file trips that config's own no-undef rule.
+// Use this separate file only when measurement shows that type-aware lint is
+// too expensive for the normal local feedback loop. If latency is acceptable,
+// folding these rules into the canonical config may be simpler.
+//
+// The warning severities are conservative bootstrap defaults for an UNKNOWN
+// consumer baseline. Promote correctness rules to error when they are intended
+// to block and the baseline is clean; keep intentional heuristics advisory.
+
 import defaultConfig from "./eslint.config.mjs";
 
 export default [
   ...defaultConfig,
   {
-    files: ["src/**/*.{ts,tsx}"],
+    files: ["src/**/*.{ts,tsx,mts,cts}"],
     languageOptions: {
       parserOptions: {
         projectService: true,
@@ -20,10 +21,6 @@ export default [
       },
     },
     rules: {
-      // Every rule here starts at "warn". None of them has a known violation
-      // count on a codebase this config has never run against, so none of
-      // them gets to fail a build sight unseen. Promote to "error" per rule,
-      // once its count is zero.
       "@typescript-eslint/no-floating-promises": "warn",
       "@typescript-eslint/no-misused-promises": "warn",
       "@typescript-eslint/no-unsafe-assignment": "warn",

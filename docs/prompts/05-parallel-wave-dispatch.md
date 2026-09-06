@@ -1,148 +1,96 @@
-# Parallel wave dispatch
+# Parallel wave dispatch — contrato endurecido
 
 ## Quando usar
 
-Use este prompt quando você já tiver uma lista de tarefas — saída de um
-plano, de uma epic (conjunto maior de tarefas relacionadas), ou só um
-lote de correções independentes — e quiser transformar isso em ondas de
-execução paralela seguras (grupos de tarefas que rodam ao mesmo tempo) em
-vez de um agente único mastigando tarefa por tarefa em série. É a versão
-"preencha os espaços" do mesmo padrão descrito em [orquestração de
-subagentes](../tools/02-subagent-orchestration.md) e no [template de
-regra de dispatch
-paralelo](../../templates/rules/parallel-subagent-driven-development.md).
+Use somente depois de existir uma lista de tarefas suficientemente entendida para declarar dependências e estado compartilhado. O objetivo não é maximizar o número de agentes; é paralelizar **apenas unidades semanticamente independentes**.
 
-## Por que funciona
+Arquivos disjuntos são úteis, mas não provam independência. Tarefas também podem colidir em migrations, schema, lockfile, porta, banco, fila, fixture, snapshot, cliente gerado, namespace e interface compartilhada.
 
-As duas regras da Etapa 2 — nenhuma dependência entre as tarefas e
-nenhuma sobreposição de arquivo — são o que torna seguro rodar vários
-agentes ao mesmo tempo; quebrar qualquer uma das duas gera conflito
-silencioso (dois agentes escrevendo por cima um do outro no mesmo
-arquivo) ou uma **onda** que na verdade não era independente. Quando fica
-incerto se essas condições valem pra uma tarefa, o prompt manda tratar
-essa tarefa como dependente de tudo que já foi listado — ou seja, o
-padrão seguro é degradar pra execução em série, nunca arriscar um falso
-paralelismo. Do lado dos commits, cada implementador só edita e reporta o
-que mudou; quem orquestra é o único que faz commit, um de cada vez, em
-ordem fixa, sempre capturando o HEAD (a referência pro commit mais
-recente do branch) na hora, nunca reaproveitando um HEAD capturado antes
-— isso elimina qualquer corrida entre agentes tentando commitar ao mesmo
-tempo.
+## Prompt
 
-## Como adaptar os placeholders
+```text
+Break [FEATURE/PLAN/TASK LIST] into safe execution waves.
 
-- **`[FEATURE/PLAN/TASK LIST]`** — aparece duas vezes: na primeira linha
-  (o que você quer quebrar em ondas) e na última ("Plan/task list:").
-  Cole ali a lista de tarefas, o plano ou a epic que você já tem em mãos;
-  se for longo, pode repetir só um nome ou resumo curto na segunda
-  ocorrência em vez do texto inteiro de novo.
-- **`[BACKEND_ROLE]`, `[FRONTEND_ROLE]`, `[DB_ROLE]`, `[TEST_ROLE]`** —
-  são só exemplos de papel/especialista pro campo `Owner:` de cada
-  tarefa. Troque pelos nomes reais dos agentes especialistas do seu
-  projeto (se você usa Claude Code com uma tabela de agentes no
-  `CLAUDE.md`, use exatamente os nomes de lá, pra que o campo `Owner:` já
-  aponte pro agente certo pra disparar). Pode adicionar ou remover
-  papéis à vontade — o próprio prompt avisa pra usar "whatever roles
-  this project defines".
+Start single-agent. Create a parallel wave only when concurrent execution has a concrete benefit and independence can be demonstrated.
 
-## O prompt
+## 1. Contract for every task
+For every unit write:
+- ID: stable ID (T01, T02, ...)
+- Goal: observable result
+- Files: files/globs expected to be written
+- Resources: DB, migration namespace, lockfile, port, queue, service or other mutable resource
+- Interfaces: contracts consumed and produced
+- Depends-on: predecessor task IDs or none
+- Generated-artifacts: generated clients, snapshots, schemas, lockfiles or derived outputs
+- Shared-state: any mutable state shared with another task
+- Verify: exact command/assertion that proves completion
+- Risk: normal | high
+- Owner: specialist only when specialization actually helps
 
-```
-Break [FEATURE/PLAN/TASK LIST] into parallel execution waves. Follow this
-exactly — the safety of running multiple agents at once depends on the
-rules below, not on judgment calls made in the moment.
+If any field that affects independence is uncertain, do not parallelize that task yet.
 
-## 1. List every task
-For each unit of work, write:
-- **ID** — short and stable (T01, T02, ...).
-- **Description** — one line.
-- **Files:** — every path/glob this task will create or modify. Be exact;
-  when in doubt, list more rather than fewer.
-- **Depends-on:** — task IDs whose output this task needs, or `none`.
-- **Owner:** — the specialist role responsible (e.g. [BACKEND_ROLE],
-  [FRONTEND_ROLE], [DB_ROLE], [TEST_ROLE] — use whatever roles this
-  project defines).
+## 2. Determine semantic independence
+Two tasks may share a wave only when ALL are true:
+1. no direct or transitive dependency exists;
+2. neither consumes an interface the other is still changing;
+3. they do not mutate the same external/shared resource;
+4. generated artifacts cannot collide by path, name, ordering or source;
+5. their write sets are either disjoint OR physically isolated in separate worktrees;
+6. integration order cannot change the meaning of either result.
 
-Any task where `Files:` or `Depends-on:` is uncertain gets `Depends-on:
-everything already listed` — that's the safe default, not a shortcut to
-skip filling it in.
+Different filenames alone are never sufficient evidence.
 
-## 2. Group into waves
-Two tasks go in the **same wave** only if BOTH hold:
-1. Neither depends on the other, directly or transitively.
-2. Their `Files:` sets are completely disjoint — zero overlap.
+## 3. Choose isolation
+- read-only reviewers/explorers may share a checkout;
+- one writer may use the normal working tree;
+- 2+ concurrent writers should prefer separate worktrees, each on its own branch, when supported;
+- if external mutable state cannot be isolated, serialize.
 
-If either fails, put the dependent (or file-colliding) task in a later
-wave. A task with no valid same-wave partner is simply a wave of one —
-that's correct, not a failure of the grouping.
+Do not run multiple writing agents against the same Git index.
 
-Show the result as a table: wave number, task IDs in it, owner per task.
-
-## 3. Execute each wave, in order
+## 4. Execute each wave
 For every wave:
-1. **Dispatch every implementer in the wave in a single batch** — this is
-   what makes it parallel instead of a string of sequential turns.
-2. **Implementers do not commit.** They implement, verify their own work,
-   and report exactly which files changed — and stop there.
-3. **The orchestrator commits**, one task at a time, in a fixed order:
-   right before each commit, capture the current HEAD fresh (never reuse a
-   HEAD captured earlier, never assume `HEAD~1`), stage that task's files,
-   commit.
-4. **That wave's reviewers run together, after all its commits exist** —
-   dispatch them in one batch too, each reviewing their task's own
-   before/after range.
-5. Only once every task in the wave is committed and reviewed, move to
-   the next wave.
+1. create/confirm an isolated workspace for each concurrent writer;
+2. dispatch all independent tasks;
+3. each task runs its own Verify check and reports exact changes/results;
+4. integrate results serially into the target branch;
+5. run global lint/typecheck/tests/build that apply;
+6. inspect the combined diff;
+7. run independent review proportional to risk;
+8. record commands, results, risks and remaining work in the PR/issue.
 
-Plan/task list: [FEATURE/PLAN/TASK LIST].
+If integration reveals a hidden dependency, stop parallel execution and re-plan/serialize the affected tasks.
+
+## 5. Output
+Show:
+- task contract table;
+- why every same-wave pair is independent in files AND state;
+- isolation strategy;
+- wave order;
+- verification per task and global verification;
+- any task intentionally serialized and why.
+
+Plan/task list: [FEATURE/PLAN/TASK LIST]
 ```
 
-## Exemplo de uso
+## Exemplo de falso paralelismo
 
-Imagine um projeto pequeno com quatro tarefas na fila. O placeholder
-`[FEATURE/PLAN/TASK LIST]` vira essa lista, e os papéis genéricos
-(`[BACKEND_ROLE]`, `[FRONTEND_ROLE]`, `[DB_ROLE]`) viram os agentes reais
-do projeto:
+```text
+T01: cria 018_add_coupon.sql
+T02: cria 018_add_index.sql
+```
 
-- **T01** — criar a tabela `relatorios` no banco (migração). `Files:`
-  `src/db/schema/relatorios.ts`, `drizzle/*`. `Depends-on:` none.
-  `Owner:` database-architect.
-- **T02** — endpoint que exporta relatórios em CSV, lendo da tabela
-  `relatorios`. `Files:` `src/app/api/relatorios/export/route.ts`.
-  `Depends-on:` T01. `Owner:` backend-specialist.
-- **T03** — botão "Exportar CSV" na tela de relatórios, chamando o
-  endpoint novo. `Files:` `src/components/relatorios/BotaoExportar.tsx`.
-  `Depends-on:` T02. `Owner:` frontend-specialist.
-- **T04** — corrigir um typo no texto da tela de login, sem relação
-  nenhuma com as outras três. `Files:`
-  `src/components/auth/FormLogin.tsx`. `Depends-on:` none. `Owner:`
-  frontend-specialist.
+Os paths são diferentes, mas disputam o namespace/ordem de migrations. Serialize ou coordene a numeração antes de executar.
 
-Na Etapa 2, o agente monta a tabela de ondas: T01 e T04 caem na **mesma
-onda**, porque nenhuma depende da outra e os arquivos não se cruzam — a
-regra olha só pra dependência e arquivo, não pra quem é o owner. T02 só
-pode entrar numa onda depois que T01 for commitado (onda 2), e T03 só
-depois de T02 (onda 3) — mesmo T03 e T04 não tendo nenhum arquivo em
-comum, T03 não entra na onda 1 porque depende de T02, que ainda nem
-existe.
+Outro exemplo:
 
-Na Etapa 3: a onda 1 dispara os implementadores de T01 e T04 juntos, num
-único lote; nenhum dos dois faz commit sozinho, eles só reportam o que
-mudou. Quem orquestra commita T01 e depois T04 (ordem fixa), capturando o
-HEAD de novo antes de cada commit. Os revisores de T01 e T04 rodam juntos
-em seguida. Só então a onda 2 (só T02) começa — e por fim a onda 3 (só
-T03).
+```text
+T01: altera schema OpenAPI
+T02: regenera cliente a partir do schema
+```
 
-## Dicas
+Arquivos escritos podem ser diferentes, mas T02 consome a interface produzida por T01: há dependência semântica.
 
-- Na dúvida, use `Depends-on: everything already listed` ("depende de
-  tudo que já foi listado") — na pior das hipóteses você perde um pouco
-  de paralelismo, nunca ganha uma condição de corrida.
-- Ordem de commit fixa por onda (não "quem terminar primeiro") mantém o
-  HEAD fácil de acompanhar — capture-o bem antes do commit daquela
-  tarefa específica, nunca antes disso.
-- Quando duas tarefas genuinamente não conseguem evitar tocar nos mesmos
-  arquivos, trate isso como sinal pra juntar as duas numa tarefa só ou
-  isolar cada uma num worktree separado (uma cópia paralela do
-  repositório, em outra pasta, isolada da principal) — não force as duas
-  pra mesma onda.
+## Regra de fallback
+
+Se a independência não puder ser demonstrada, **serialize**. Paralelismo é otimização, não critério de qualidade.
